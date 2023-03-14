@@ -1,191 +1,216 @@
 (() => {
-  // src/HitboxTracker.ts
-  var HitboxTracker = class {
-    constructor() {
-      // Keep track of all hitboxes
-      this.hitboxes = {};
-      // Will be using axis aligned bounding boxes
-      // So we should track each axis separately
-      this.axis = [[], []];
+  // src/utils.ts
+  function InitializeArray(width, height, value) {
+    const map = [];
+    for (let x = 0; x < width; x++) {
+      map[x] = [];
+      for (let y = 0; y < height; y++) {
+        map[x][y] = value;
+      }
     }
-    // Add a hitbox to the tracker
-    addHitbox(id, hitbox) {
-      const xMarker = this.addToAxis(this.axis[0], 0, id, hitbox.x, hitbox.x + hitbox.w);
-      const yMarker = this.addToAxis(this.axis[1], 1, id, hitbox.y, hitbox.y + hitbox.h);
-      const entry = {
-        id,
-        hitbox,
-        axisRecords: [xMarker, yMarker]
-      };
-      this.hitboxes[id] = entry;
-      const collideBoth = [...xMarker.overlap].filter((x) => yMarker.overlap.has(x));
-      const collisionResult = {
-        id,
-        collideX: [...xMarker.overlap],
-        collideY: [...yMarker.overlap],
-        collided: collideBoth,
-        collidedAny: collideBoth.length > 0
-      };
-      return collisionResult;
+    return map;
+  }
+  function ChooseWeightedIndex(weights) {
+    const total = weights.reduce((a, b) => a + b, 0);
+    const r = Math.random() * total;
+    let sum = 0;
+    for (let i = 0; i < weights.length; i++) {
+      sum += weights[i];
+      if (r <= sum) {
+        return i;
+      }
     }
-    // Add a hitbox to the tracker for a specific axis
-    addToAxis(axis, axisid, id, low, high) {
-      const lowMarker = { id, markerId: 0, value: low };
-      const highMarker = { id, markerId: 1, value: high };
-      const initialOverlap = /* @__PURE__ */ new Set();
-      let i;
-      let j;
-      for (i = 0; i < axis.length; i++) {
-        if (axis[i].value > low)
-          break;
-        if (axis[i].markerId === 0) {
-          initialOverlap.add(axis[i].id);
-        } else {
-          initialOverlap.delete(axis[i].id);
-        }
+    return weights.length - 1;
+  }
+
+  // src/Tiler.ts
+  var Tiler = class {
+    static ComputeTiling(config) {
+      Tiler.width = config.mapSize[0];
+      Tiler.height = config.mapSize[1];
+      Tiler.maxArea = config.maxArea;
+      Tiler.maxAreaRatio = config.maxAreaRatio;
+      Tiler.computeProbability = config.computeProbability;
+      Tiler.tileId = 0;
+      Tiler.map = InitializeArray(Tiler.width, Tiler.height, -1);
+      Tiler.tileArray = [];
+      Tiler.tiles = {};
+      for (let i = 0; i < 0.1 * Tiler.width * Tiler.height; i++) {
+        Tiler.placeRandomTile();
       }
-      axis.splice(i, 0, lowMarker);
-      for (j = i + 1; j < axis.length; j++) {
-        if (axis[j].value > high)
-          break;
-        if (axis[j].markerId === 0) {
-          initialOverlap.add(axis[j].id);
-        }
-      }
-      axis.splice(j, 0, highMarker);
-      for (let k = i + 1; k < j; k++) {
-        this.hitboxes[axis[k].id].axisRecords[axisid].markers[axis[k].markerId] += 1;
-      }
-      for (let k = j + 1; k < axis.length; k++) {
-        this.hitboxes[axis[k].id].axisRecords[axisid].markers[axis[k].markerId] += 2;
-      }
-      for (const hitboxId of initialOverlap) {
-        const hitbox = this.hitboxes[hitboxId];
-        hitbox.axisRecords[axisid].overlap.add(id);
-      }
-      const result = {
-        id: axisid,
-        markers: [i, j],
-        overlap: initialOverlap
-      };
-      return result;
-    }
-    // Get distance a hitbox can move before colliding with another
-    // Assume movement is in one direction
-    getDistanceToCollision(id, axis, maxDistance) {
-      const entry = this.hitboxes[id];
-      const targetAxis = this.axis[axis];
-      const targetAxisRecord = entry.axisRecords[axis];
-      const otherAxisRecord = entry.axisRecords[1 - axis];
-      const shared = [...targetAxisRecord.overlap].filter((x) => otherAxisRecord.overlap.has(x));
-      if (shared.length > 0)
-        return 0;
-      if (otherAxisRecord.overlap.size === 0)
-        return maxDistance;
-      const markerId = maxDistance > 0 ? 1 : 0;
-      const increment = maxDistance > 0 ? 1 : -1;
-      const absMaxDistance = Math.abs(maxDistance);
-      const startingMarker = targetAxisRecord.markers[markerId];
-      const startMarkerValue = targetAxis[startingMarker].value;
-      for (let i = startingMarker + increment; i < targetAxis.length && i >= 0; i += increment) {
-        const distance = targetAxis[i].value - startMarkerValue;
-        if (distance > absMaxDistance) {
-          return maxDistance;
-        } else {
-          if (otherAxisRecord.overlap.has(targetAxis[i].id)) {
-            return distance * Math.sign(maxDistance);
+      for (let x = 0; x < Tiler.width; x++) {
+        for (let y = 0; y < Tiler.height; y++) {
+          if (Tiler.map[x][y] === -1) {
+            Tiler.placeTileAt(x, y);
           }
         }
       }
-      return maxDistance;
+      const result = {
+        tiles: Tiler.tileArray,
+        at: (x, y) => Tiler.tiles[Tiler.map[x][y]]
+      };
+      return result;
     }
-    // Moves a hitbox by a certain amount in a certain direction
-    moveHitbox(id, axis, distance) {
-      const entry = this.hitboxes[id];
-      const targetAxis = this.axis[axis];
-      const targetAxisRecord = entry.axisRecords[axis];
-      let i;
-      let j;
-      const unOverlapped = /* @__PURE__ */ new Set();
-      const nowOverlapped = /* @__PURE__ */ new Set();
-      const increment = distance > 0 ? 1 : -1;
-      const trailingEdgeId = distance > 0 ? 0 : 1;
-      const leadingEdgeId = 1 - trailingEdgeId;
-      const trailingEdgeIndex = targetAxisRecord.markers[trailingEdgeId];
-      const trailingEdgeValue = targetAxis[trailingEdgeIndex].value;
-      for (i = trailingEdgeIndex + increment; i < targetAxis.length && i >= 0; i += increment) {
-        const marker = targetAxis[i];
-        const distanceMoved = marker.value - trailingEdgeValue;
-        if (Math.abs(distanceMoved) >= Math.abs(distance)) {
-          i -= increment;
-          break;
-        }
-        if (marker.markerId !== trailingEdgeId) {
-          unOverlapped.add(marker.id);
+    static placeRandomTile() {
+      const x = Math.floor(Math.random() * Tiler.width);
+      const y = Math.floor(Math.random() * Tiler.height);
+      if (Tiler.map[x][y] !== -1) {
+        return;
+      }
+      Tiler.placeTileAt(x, y);
+    }
+    static placeTileAt(x, y) {
+      if (Tiler.map[x][y] !== -1) {
+        return;
+      }
+      const options = Tiler.getTileOptions(x, y);
+      const weights = options.map(([i, j]) => Tiler.computeProbability(i, j));
+      const chosen = ChooseWeightedIndex(weights);
+      const [width, height] = options[chosen];
+      const newTile = { x, y, width, height };
+      Tiler.tiles[Tiler.tileId] = newTile;
+      Tiler.tileArray.push(newTile);
+      Tiler.tileId++;
+      for (let i = 0; i < width; i++) {
+        for (let j = 0; j < height; j++) {
+          if (Tiler.map[x + i][y + j] !== -1) {
+            throw new Error("Tile already placed");
+          }
+          Tiler.map[x + i][y + j] = Tiler.tileId;
         }
       }
-      const leadingEdgeIndex = targetAxisRecord.markers[leadingEdgeId];
-      const leadingEdgeValue = targetAxis[leadingEdgeIndex].value;
-      for (j = leadingEdgeIndex + increment; j < targetAxis.length && j >= 0; j += increment) {
-        const marker = targetAxis[j];
-        const distanceMoved = marker.value - leadingEdgeValue;
-        if (Math.abs(distanceMoved) >= Math.abs(distance)) {
-          j -= increment;
-          break;
-        }
-        if (marker.markerId !== leadingEdgeId) {
-          nowOverlapped.add(marker.id);
-        }
-      }
-      if (distance > 0) {
-        for (let id2 = trailingEdgeIndex; id2 <= i; id2++) {
-          this.hitboxes[targetAxis[id2].id].axisRecords[axis].markers[targetAxis[id2].markerId] -= 1;
-        }
-        for (let id2 = leadingEdgeIndex; id2 <= j; id2++) {
-          this.hitboxes[targetAxis[id2].id].axisRecords[axis].markers[targetAxis[id2].markerId] -= 1;
-        }
-      } else {
-        for (let id2 = trailingEdgeIndex; id2 >= i; id2--) {
-          this.hitboxes[targetAxis[id2].id].axisRecords[axis].markers[targetAxis[id2].markerId] += 1;
-        }
-        for (let id2 = leadingEdgeIndex; id2 >= j; id2--) {
-          this.hitboxes[targetAxis[id2].id].axisRecords[axis].markers[targetAxis[id2].markerId] += 1;
+    }
+    static getTileOptions(x, y) {
+      const options = [];
+      let maxWidth = Tiler.maxArea;
+      for (let i = 0; i < Tiler.maxArea; i++) {
+        for (let j = 0; j < maxWidth; j++) {
+          const width = i + 1;
+          const height = j + 1;
+          if (width * height > Tiler.maxArea) {
+            maxWidth = j;
+            break;
+          }
+          if (x + i >= Tiler.width || y + j >= Tiler.height) {
+            maxWidth = j;
+            break;
+          }
+          if (Tiler.map[x + i][y + j] !== -1) {
+            maxWidth = j;
+            break;
+          }
+          if (width / height > Tiler.maxAreaRatio || height / width > Tiler.maxAreaRatio) {
+            continue;
+          }
+          options.push([width, height]);
         }
       }
-      for (const otherId of unOverlapped) {
-        this.hitboxes[otherId].axisRecords[axis].overlap.delete(id);
-        entry.axisRecords[axis].overlap.delete(otherId);
-      }
-      for (const otherId of nowOverlapped) {
-        this.hitboxes[otherId].axisRecords[axis].overlap.add(id);
-        entry.axisRecords[axis].overlap.add(otherId);
-      }
-      entry.axisRecords[axis].markers[trailingEdgeId] = i;
-      entry.axisRecords[axis].markers[leadingEdgeId] = j;
-      targetAxis.splice(i, 0, targetAxis.splice(trailingEdgeIndex, 1)[0]);
-      targetAxis.splice(j, 0, targetAxis.splice(leadingEdgeIndex, 1)[0]);
-      targetAxis[i].value += distance;
-      targetAxis[j].value += distance;
-      entry.hitbox[axis == 0 ? "x" : "y"] += distance;
+      return options;
     }
   };
 
-  // src/index.ts
-  console.clear();
-  var tracker = new HitboxTracker();
-  var hitbox1 = tracker.addHitbox("A", {
-    x: 0,
-    y: 0,
-    w: 1,
-    h: 1
+  // website/index.ts
+  var doing = false;
+  var MaxArea = 9;
+  var TileSizePixels = 20;
+  var MaxAreaRatio = [1, 1];
+  function toFraction(x, tolerance) {
+    if (x == 0)
+      return [0, 1];
+    if (x < 0)
+      x = -x;
+    if (!tolerance)
+      tolerance = 1e-4;
+    var num = 1, den = 1;
+    function iterate() {
+      var R = num / den;
+      if (Math.abs((R - x) / x) < tolerance)
+        return;
+      if (R < x)
+        num++;
+      else
+        den++;
+      iterate();
+    }
+    iterate();
+    return [num, den];
+  }
+  function setLabel(id, value) {
+    const element = document.getElementById(id);
+    if (element === null) {
+      throw new Error("Element not found");
+    }
+    element.innerText = value;
+  }
+  function fromInput(id) {
+    const element = document.getElementById(id);
+    if (element === null) {
+      throw new Error("Element not found");
+    }
+    return +element.value;
+  }
+  function fromSelect(id) {
+    const element = document.getElementById(id);
+    if (element === null) {
+      throw new Error("Element not found");
+    }
+    return element.value;
+  }
+  function run() {
+    MaxArea = Math.floor(fromInput("size"));
+    MaxAreaRatio = toFraction(fromInput("ratio"), 0.1);
+    TileSizePixels = Math.floor(fromInput("tile-size"));
+    const weightOption = fromSelect("weight-option");
+    const computeProbability = [
+      (x, y) => 1 / (x * y),
+      (x, y) => 1,
+      (x, y) => x * y,
+      (x, y) => {
+        if (x == 1 || y == 1) {
+          return 1e-6;
+        }
+        return (x * y) ** 3;
+      }
+    ][weightOption];
+    const mapSize = Math.floor(800 / TileSizePixels);
+    TileSizePixels = 800 / mapSize;
+    setLabel("size-label", `Maximum Size of ${MaxArea} tiles`);
+    setLabel("ratio-label", `Maximum Ratio of ${MaxAreaRatio[0]} to ${MaxAreaRatio[1]}`);
+    setLabel("tile-size-label", `Base Tile Size of ${mapSize} pixels`);
+    const canvas = document.getElementById("canvas");
+    const tileSize = 20;
+    const tiles = Tiler.ComputeTiling({
+      mapSize: [mapSize, mapSize],
+      maxArea: MaxArea,
+      maxAreaRatio: MaxAreaRatio[0] / MaxAreaRatio[1],
+      computeProbability
+    });
+    if (canvas === null) {
+      throw new Error("Canvas not found");
+    }
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, 800, 800);
+    for (const tile of tiles.tiles) {
+      ctx.strokeStyle = "white";
+      ctx.strokeRect(1 + tile.x * TileSizePixels, 1 + tile.y * TileSizePixels, tile.width * TileSizePixels, tile.height * TileSizePixels);
+      ctx.fillStyle = "#040414";
+      ctx.fillRect(1 + tile.x * TileSizePixels + 3, 1 + tile.y * TileSizePixels + 3, tile.width * TileSizePixels - 7, tile.height * TileSizePixels - 7);
+    }
+  }
+  document._regenerateClick = run;
+  document._moving = false;
+  document.addEventListener("mousemove", function(e) {
+    if (doing) {
+      return;
+    }
+    if (document._moving) {
+      doing = true;
+      setTimeout(() => {
+        doing = false;
+        run();
+      }, 40);
+    }
   });
-  var hitbox2 = tracker.addHitbox("B", {
-    x: 1,
-    y: 1,
-    w: 1,
-    h: 1
-  });
-  tracker.moveHitbox("A", 0, 0.5);
-  tracker.moveHitbox("B", 1, -0.5);
-  console.dir(tracker, { depth: null });
+  run();
 })();

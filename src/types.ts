@@ -1,42 +1,25 @@
+export interface TilerConfig {
+
+    // Size of the map to be tiled
+    mapSize: [number, number]
+
+    // Max area of a tile
+    maxArea: number
+    maxAreaRatio: number
+
+    // Determine the weight that is assigned to a tile of a given size
+    computeProbability: (x: number, y: number) => number
+
+}
+
 export interface Tile {
-    color: string;
+    x: number
+    y: number
+    width: number
+    height: number
 }
 
-export interface WaveColapseRule {
-    tile: string,
-    bordering: string[],
-    weight?: number
-}
-
-export const Tiles : {[id: string]: Tile}= {
-    "grass": {
-        color: "#00FF00"
-    },
-    "water": {
-        color: "#0000FF"
-    },
-    "sand": {
-        color: "#FFFF00"
-    },
-    "deepwater": {
-        color: "#0000AA"
-    },
-    "mountain": {
-        color: "#AAAAAA"
-    },
-    "snow": {
-        color: "#FFFFFF"
-    },
-    "forest": {
-        color: "#00AA00"
-    },
-    "deepforest1": {
-        color: "#005500"
-    },
-    "deepforest2": {
-        color: "#004400"
-    },
-    "deepOcean": {
-        color: "#000044"
-    },
+export interface ResultTiles {
+    tiles: Tile[]
+    at: (x: number, y: number) => Tile | undefined
 }
